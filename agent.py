@@ -1,35 +1,33 @@
-!pip install -q google-genai requests
+!pip install -q transformers torch accelerate requests
 
-import requests, mimetypes, time
-from google import genai
-from google.genai import types
-from google.colab import userdata
+import requests, time, torch
+from transformers import pipeline
 
 API = "https://agents-course-unit4-scoring.hf.space"
 USERNAME = "Anjali02x"
 AGENT_CODE = "https://github.com/Anjali02x/Mini-AI-Agent"
 
-client = genai.Client(api_key=userdata.get("Gemini_Api_Key"))
-
-config = types.GenerateContentConfig(
-    tools=[types.Tool(google_search=types.GoogleSearch())],
-    system_instruction="Reply with ONLY the final answer, no explanation. Use search when needed.",
-)
+print("Downloading local AI model (this takes 1-2 minutes)...")
+pipe = pipeline("text-generation", model="HuggingFaceTB/SmolLM2-1.7B-Instruct", device_map="auto")
 
 def answer(q):
-    parts = [q["question"]]
+    text = q["question"]
     if q.get("file_name"):
-        f = requests.get(f"{API}/files/{q['task_id']}", timeout=60)
-        if f.ok:
-            mime = mimetypes.guess_type(q["file_name"])[0] or "text/plain"
-            parts.append(types.Part.from_bytes(data=f.content, mime_type=mime))
+         text += " (Note: A file was attached, ignore it and answer the text.)"
+    
+    messages = [
+        {"role": "system", "content": "Reply with ONLY the final answer."},
+        {"role": "user", "content": text}
+    ]
+    
     for _ in range(3):
         try:
-            r = client.models.generate_content(model="gemini-1.5-flash", contents=parts, config=config)
-            return (r.text or "").strip()
+            response = pipe(messages, max_new_tokens=50)
+            # Extract the generated text
+            return response[0]['generated_text'][-1]['content'].strip()
         except Exception as e:
-            print(f"Error: {e}. Retrying...")
-            time.sleep(10)
+            print(f"Error: {e}")
+            time.sleep(2)
     return ""
 
 print("Fetching questions...")
@@ -42,12 +40,4 @@ for q in questions:
     print(f"→ Answer: {a}")
     answers.append({"task_id": q["task_id"], "submitted_answer": a})
 
-print("Submitting answers...")
-res = requests.post(f"{API}/submit", json={
-    "username": USERNAME, 
-    "agent_code": AGENT_CODE, 
-    "answers": answers
-}, timeout=120)
-
-print("Server Response:")
-print(res.json())
+print("Finished generating answers! You can now run Cell 2 to submit.")
