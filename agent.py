@@ -1,38 +1,32 @@
 !pip install -q transformers torch accelerate requests
 
 import requests, time, torch
-from transformers import pipeline
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 
 API = "https://agents-course-unit4-scoring.hf.space"
 USERNAME = "Anjali02x"
 AGENT_CODE = "https://github.com/Anjali02x/Mini-AI-Agent/blob/main/agent.py"
 
-print("Loading fast local AI model...")
-pipe = pipeline("text-generation", model="HuggingFaceTB/SmolLM2-1.7B-Instruct", device_map="auto")
+print("Loading Flan-T5 model directly...")
+# We load the model manually to bypass the broken pipeline
+model_name = "google/flan-t5-large"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to("cuda" if torch.cuda.is_available() else "cpu")
 
 def answer(q):
     text = q["question"]
+    if q.get("file_name"):
+         text += " (Note: A file was attached, ignore it and answer the text.)"
     
-    # A few-shot prompt to force the small model to be brief and accurate
-    prompt = f"""You are a trivia expert. Answer the question with ONLY the exact final answer (1-3 words). Do not explain.
-    
-Question: What is the capital of France?
-Answer: Paris
-
-Question: Who wrote Romeo and Juliet?
-Answer: William Shakespeare
-
-Question: {text}
-Answer:"""
-    
-    messages = [{"role": "user", "content": prompt}]
+    prompt = f"Answer this question with ONLY the exact final answer (1-3 words).\nQuestion: {text}"
     
     try:
-        response = pipe(messages, max_new_tokens=15)
-        # Clean up the output
-        ans = response[0]['generated_text'][-1]['content']
-        ans = ans.replace("Answer:", "").strip()
-        return ans
+        # Tokenize and generate manually
+        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+        outputs = model.generate(**inputs, max_new_tokens=20)
+        # Decode the answer
+        result = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        return result.strip()
     except Exception as e:
         return ""
 
