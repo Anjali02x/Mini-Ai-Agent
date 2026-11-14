@@ -7,24 +7,33 @@ API = "https://agents-course-unit4-scoring.hf.space"
 USERNAME = "Anjali02x"
 AGENT_CODE = "https://github.com/Anjali02x/Mini-AI-Agent/blob/main/agent.py"
 
-print("Loading local AI model...")
+print("Loading fast local AI model...")
 pipe = pipeline("text-generation", model="HuggingFaceTB/SmolLM2-1.7B-Instruct", device_map="auto")
 
 def answer(q):
     text = q["question"]
-    if q.get("file_name"):
-         text += " (Note: A file was attached, ignore it and answer the text.)"
     
-    messages = [
-        {"role": "system", "content": "You are a trivia expert. Reply with ONLY the exact answer (1 word max). Do not explain."},
-        {"role": "user", "content": text}
-    ]
+    # A few-shot prompt to force the small model to be brief and accurate
+    prompt = f"""You are a trivia expert. Answer the question with ONLY the exact final answer (1-3 words). Do not explain.
+    
+Question: What is the capital of France?
+Answer: Paris
+
+Question: Who wrote Romeo and Juliet?
+Answer: William Shakespeare
+
+Question: {text}
+Answer:"""
+    
+    messages = [{"role": "user", "content": prompt}]
     
     try:
-        response = pipe(messages, max_new_tokens=10)
-        return response[0]['generated_text'][-1]['content'].strip()
+        response = pipe(messages, max_new_tokens=15)
+        # Clean up the output
+        ans = response[0]['generated_text'][-1]['content']
+        ans = ans.replace("Answer:", "").strip()
+        return ans
     except Exception as e:
-        print(f"Error: {e}")
         return ""
 
 print("Fetching questions...")
