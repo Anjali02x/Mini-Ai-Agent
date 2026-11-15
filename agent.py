@@ -1,43 +1,47 @@
-!pip install -q transformers torch accelerate requests
+!pip install -q requests ddgs
 
-import requests, time, torch
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+import requests, time
+from ddgs import DDGS
+from google.colab import userdata
 
 API = "https://agents-course-unit4-scoring.hf.space"
-USERNAME = "Anjali02x"
-AGENT_CODE = "https://github.com/Anjali02x/Mini-AI-Agent/blob/main/agent.py"
+KEY = userdata.get("Groq_Api_Key")
+H = {"Authorization": f"Bearer {KEY}"}
 
-print("Loading Flan-T5 model directly...")
-# We load the model manually to bypass the broken pipeline
-model_name = "google/flan-t5-large"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to("cuda" if torch.cuda.is_available() else "cpu")
+# Ask Groq which models are live, then prefer the strongest text model
+live = [m["id"] for m in requests.get("https://api.groq.com/openai/v1/models", headers=H, timeout=30).json()["data"]]
+print("Live models:", live)
+prefs = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
+MODELS = [m for m in prefs if m in live] or [m for m in live if "whisper" not in m and "guard" not in m][:2]
+print("Using:", MODELS)
 
-def answer(q):
-    text = q["question"]
-    if q.get("file_name"):
-         text += " (Note: A file was attached, ignore it and answer the text.)"
-    
-    prompt = f"Answer this question with ONLY the exact final answer (1-3 words).\nQuestion: {text}"
-    
+def search(text):
     try:
-        # Tokenize and generate manually
-        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-        outputs = model.generate(**inputs, max_new_tokens=20)
-        # Decode the answer
-        result = tokenizer.decode(outputs[0], skip_special_tokens=True)
-        return result.strip()
-    except Exception as e:
+        res = DDGS().text(text, max_results=5)
+        return "\n".join(f"- {r['title']}: {r['body']}" for r in res)
+    except Exception:
         return ""
 
-print("Fetching questions...")
-questions = requests.get(f"{API}/questions", timeout=60).json()
+def answer(q):
+    prompt = (f"Web search results:\n{search(q['question'])}\n\nQuestion: {q['question']}\n"
+              "Reply with ONLY the final answer, no explanation.")
+    for attempt in range(4):
+        for m in MODELS:
+            try:
+                r = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=H,
+                    json={"model": m, "messages": [{"role": "user", "content": prompt}]}, timeout=60)
+                if r.ok:
+                    return r.json()["choices"][0]["message"]["content"].strip()
+                print("  error:", r.status_code, r.text[:150])
+            except Exception as e:
+                print("  error:", str(e)[:150])
+        time.sleep(10 * (attempt + 1))
+    return ""
 
+questions = requests.get(f"{API}/questions", timeout=60).json()
 answers = []
 for q in questions:
-    print(f"Answering task: {q['task_id'][:8]}...")
     a = answer(q)
-    print(f"→ Answer: {a}")
+    print(q["task_id"][:8], "→", a)
     answers.append({"task_id": q["task_id"], "submitted_answer": a})
-
-print("\nFinished! Run Cell 2 to submit.")
+    time.sleep(3)
